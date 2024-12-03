@@ -16,10 +16,6 @@ import urllib.parse
 
 imageSourceUrl = 'https://'+ app.config['BLOB_ACCOUNT']  + '.blob.core.windows.net/' + app.config['BLOB_CONTAINER']  + '/'
 
-msal_app = msal.PublicClientApplication(
-    client_id=Config.CLIENT_ID,
-    authority=Config.AUTHORITY
-)
 
 @app.route('/')
 @app.route('/home')
@@ -92,7 +88,10 @@ def authorized():
     if request.args.get('code'):
         cache = _load_cache()
         # TODO: Acquire a token from a built msal app, along with the appropriate redirect URI
-        result = None
+        result = _build_msal_app(cache=cache).acquire_token_by_authorization_code(
+                    request.args['code'],
+                    scopes=Config.SCOPE,
+                    redirect_uri=url_for('authorized', _external=True, _scheme='https'))
         if "error" in result:
             return render_template("auth_error.html", result=result)
         session["user"] = result.get("id_token_claims")
@@ -125,18 +124,16 @@ def _save_cache(cache):
     # TODO: Save the cache, if it has changed
     pass
 
-def _build_msal_app(cache=None, authority=None):
-    # TODO: Return a ConfidentialClientApplication
-    return None
+def _build_msal_app(cache=None):
+    msal_app = msal.ConfidentialClientApplication(
+        Config.CLIENT_ID, authority=Config.AUTHORITY,
+        client_credential=Config.CLIENT_SECRET, token_cache=cache
+    )
+    return msal_app
 
-def _build_auth_url(authority=Config.AUTHORITY, scopes=None, state=None):
-    auth_endpoint = f"{authority}/oauth2/v2.0/authorize"
-    params = {
-        "client_id": Config.CLIENT_ID,
-        "response_type": "code",
-        "redirect_uri": f"{request.scheme}://{request.host}/{Config.REDIRECT_PATH}",  # Replace with your redirect URI
-        "scope": " ".join(scopes) if scopes else "openid profile",
-        "state": state or "default_state"
-    }
-    auth_url = f"{auth_endpoint}?{urllib.parse.urlencode(params)}"
-    return auth_url
+def _build_auth_url(scopes=None, state=None):
+    msal_app = _build_msal_app()
+    return msal_app.get_authorization_request_url(
+        scopes or [],
+        state=state or str(uuid.uuid4()),
+        redirect_uri=url_for('authorized', _external=True, _scheme='https'))
