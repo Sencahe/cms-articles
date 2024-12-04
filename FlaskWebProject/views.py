@@ -82,19 +82,22 @@ def login():
 @app.route(Config.REDIRECT_PATH)  # Its absolute URL must match your app's redirect_uri set in AAD
 def authorized():
     if request.args.get('state') != session.get("state"):
+        app.logger.info("User already logged in")
         return redirect(url_for("home"))  # No-OP. Goes back to Index page
     if "error" in request.args:  # Authentication/Authorization failure
+        app.logger.error("Error at login attempt")
         return render_template("auth_error.html", result=request.args)
     if request.args.get('code'):
         cache = _load_cache()
-        # TODO: Acquire a token from a built msal app, along with the appropriate redirect URI
         result = _build_msal_app(cache=cache).acquire_token_by_authorization_code(
                     request.args['code'],
                     scopes=Config.SCOPE,
                     redirect_uri=url_for('authorized', _external=True, _scheme='https'))
         if "error" in result:
+            app.logger.error("Error at login attempt trying to get token.")
             return render_template("auth_error.html", result=result)
         session["user"] = result.get("id_token_claims")
+        app.logger.info(f"User {session['user']['name']} succesfully logged in.")
         # Note: In a real app, we'd use the 'name' property from session["user"] below
         # Here, we'll use the admin username for anyone who is authenticated by MS
         user = User.query.filter_by(username="admin").first()
@@ -116,13 +119,14 @@ def logout():
     return redirect(url_for('login'))
 
 def _load_cache():
-    # TODO: Load the cache from `msal`, if it exists
-    cache = None
+    cache = msal.SerializableTokenCache()
+    if session.get('token_cache'):
+        cache.deserialize(session['token_cache'])
     return cache
 
 def _save_cache(cache):
-    # TODO: Save the cache, if it has changed
-    pass
+    if cache.has_state_changed:
+        session['token_cache'] = cache.serialize()
 
 def _build_msal_app(cache=None):
     msal_app = msal.ConfidentialClientApplication(
